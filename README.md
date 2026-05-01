@@ -277,7 +277,6 @@ Webhook → Kafka → Consumer → Review
 
 ## 🚀 Future Improvements
 
-* AST-based analysis
 * Multi-file context
 * Smart deduplication
 * UI dashboard
