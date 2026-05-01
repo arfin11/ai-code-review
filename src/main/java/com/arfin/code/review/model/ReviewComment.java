@@ -9,5 +9,6 @@ public class ReviewComment {
     private String suggestion;
     private String lineHint;
     private String fileName;
-    private int lineNumber;
+    private String anchor;
+    private Integer lineNumber;
 }

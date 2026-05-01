@@ -42,7 +42,7 @@ public class LLMService {
                 c.setIssue(node.path("issue").asText());
                 c.setSuggestion(node.path("suggestion").asText());
                 c.setLineHint(node.path("lineHint").asText());
-
+                c.setLineNumber(extractLineNumber(c.getLineHint()));
                 comments.add(c);
             }
 
@@ -55,5 +55,11 @@ public class LLMService {
             e.printStackTrace();
             return new ReviewResponse();
         }
+    }
+    private Integer extractLineNumber(String lineHint) {
+        if (lineHint == null) return null;
+
+        String digits = lineHint.replaceAll("\\D+", "");
+        return digits.isEmpty() ? null : Integer.parseInt(digits);
     }
 }

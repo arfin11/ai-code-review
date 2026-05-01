@@ -1,10 +1,13 @@
 package com.arfin.code.review.github;
 
+import com.arfin.code.review.controller.GitHubWebhookController;
 import com.arfin.code.review.model.FileDiff;
 import com.arfin.code.review.model.ReviewComment;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -21,6 +24,7 @@ public class GitHubService {
 
     private final HttpClient client = HttpClient.newHttpClient();
     private final GitHubTokenProvider tokenProvider;
+    private static final Logger log = LoggerFactory.getLogger(GitHubService.class);
 
 
 
@@ -38,10 +42,10 @@ public class GitHubService {
                 .uri(URI.create(url))
                 .header("Authorization", "Bearer " + token)
                 .build();
-
+        log.info("Fetching PR files: {} ",request.toString());
         HttpResponse<String> response =
                 client.send(request, HttpResponse.BodyHandlers.ofString());
-
+        log.info("Fetched files: {} ",response.body());
         JsonNode array = mapper.readTree(response.body());
 
         List<FileDiff> files = new ArrayList<>();
@@ -119,8 +123,8 @@ public class GitHubService {
         HttpResponse<String> response =
                 client.send(request, HttpResponse.BodyHandlers.ofString());
 
-        System.out.println("STATUS API RESPONSE: " + response.body());
-        System.out.println("STATUS CODE: " + response.statusCode());
+        log.info("STATUS API RESPONSE: " + response.body());
+        log.info("STATUS CODE: " + response.statusCode());
     }
     public void postComment(String repo, int pr, int installationId, String message) throws Exception {
 
@@ -193,8 +197,8 @@ public class GitHubService {
         HttpResponse<String> response =
                 client.send(request, HttpResponse.BodyHandlers.ofString());
 
-        System.out.println("CHECK RUN STATUS: " + response.statusCode());
-        System.out.println("CHECK RUN BODY: " + response.body());
+        log.info("CHECK RUN STATUS: " + response.statusCode());
+        log.info("CHECK RUN BODY: " + response.body());
     }
     private String mapSeverity(String severity) {
         switch (severity.toUpperCase()) {
