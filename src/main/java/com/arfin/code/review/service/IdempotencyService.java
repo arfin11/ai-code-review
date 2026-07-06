@@ -5,6 +5,8 @@ import com.arfin.code.review.repo.ProcessedEventRepository;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+
 @Service
 @AllArgsConstructor
 public class IdempotencyService {
@@ -16,6 +18,6 @@ public class IdempotencyService {
     }
 
     public void markProcessed(String id) {
-        repo.save(new ProcessedEvent(id));
+        repo.save(new ProcessedEvent(id, LocalDateTime.now()));
     }
 }

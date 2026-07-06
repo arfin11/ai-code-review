@@ -4,6 +4,7 @@ import com.arfin.code.review.kafka.PRReviewProducer;
 import com.arfin.code.review.model.PRReviewEvent;
 import com.arfin.code.review.service.IdempotencyService;
 import com.arfin.code.review.service.PRReviewService;
+import com.arfin.code.review.service.RateLimiterService;
 import com.arfin.code.review.util.SignatureValidator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,6 +23,7 @@ public class GitHubWebhookController {
 
     private final PRReviewProducer producer;
     private final IdempotencyService idempotencyService;
+    private final RateLimiterService rateLimiterService;
 
     private final ObjectMapper mapper = new ObjectMapper();
     private static final Logger log = LoggerFactory.getLogger(GitHubWebhookController.class);
@@ -29,9 +31,10 @@ public class GitHubWebhookController {
     private String secret;
 
     public GitHubWebhookController(PRReviewProducer producer,
-                                   IdempotencyService idempotencyService) {
+                                   IdempotencyService idempotencyService,RateLimiterService rateLimiterService) {
         this.producer = producer;
         this.idempotencyService = idempotencyService;
+        this.rateLimiterService=rateLimiterService;
     }
     @PostMapping
     public ResponseEntity<String> handle(
@@ -88,7 +91,11 @@ public class GitHubWebhookController {
             }
 
             int installationId = installationNode.path("id").asInt();
-
+            if (!rateLimiterService.allowRequest(repo)) {
+                log.warn("Rate limit exceeded for {}", repo);
+                return ResponseEntity.status(429)
+                        .body("Rate limit exceeded");
+            }
             if (idempotencyService.isDuplicate(deliveryId)) {
                 log.info("Duplicate event ignored: {}", deliveryId);
                 return ResponseEntity.ok("Duplicate");

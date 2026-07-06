@@ -1,42 +1,23 @@
 package com.arfin.code.review.repo;
 
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "processed_events")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class ProcessedEvent {
 
     @Id
-    @Column(name = "delivery_id", nullable = false, unique = true)
-    private String deliveryId;
+    @Column(name = "event_id", nullable = false, unique = true)
+    private String eventId;
 
-    @Column(name = "created_at")
-    private LocalDateTime createdAt;
-
-    // ✅ REQUIRED by JPA
-    public ProcessedEvent() {
-    }
-
-    public ProcessedEvent(String deliveryId) {
-        this.deliveryId = deliveryId;
-        this.createdAt = LocalDateTime.now();
-    }
-
-    // ✅ Getters & Setters
-    public String getDeliveryId() {
-        return deliveryId;
-    }
-
-    public void setDeliveryId(String deliveryId) {
-        this.deliveryId = deliveryId;
-    }
-
-    public LocalDateTime getCreatedAt() {
-        return createdAt;
-    }
-
-    public void setCreatedAt(LocalDateTime createdAt) {
-        this.createdAt = createdAt;
-    }
+    @Column(name = "processed_at")
+    private LocalDateTime processedAt ;
 }
