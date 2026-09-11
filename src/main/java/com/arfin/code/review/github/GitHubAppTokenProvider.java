@@ -1,5 +1,6 @@
 package com.arfin.code.review.github;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
@@ -32,10 +33,24 @@ public class GitHubAppTokenProvider implements GitHubTokenProvider {
                     .build();
 
             HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
-            return mapper.readTree(res.body()).get("token").asText();
+            String body = res.body();
+            if (res.statusCode() >= 300) {
+                throw new IllegalStateException("Failed to create GitHub installation token for installationId="
+                        + installationId + ": HTTP " + res.statusCode() + " body=" + body);
+            }
 
+            JsonNode root = mapper.readTree(body);
+            JsonNode tokenNode = root.get("token");
+            if (tokenNode == null || tokenNode.isNull() || tokenNode.asText() == null || tokenNode.asText().isBlank()) {
+                throw new IllegalStateException("GitHub installation token response did not contain a 'token' field for installationId="
+                        + installationId + ": body=" + body);
+            }
+            return tokenNode.asText();
+
+        } catch (IllegalStateException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new RuntimeException("Unable to fetch GitHub installation token for installationId=" + installationId, e);
         }
     }
 }

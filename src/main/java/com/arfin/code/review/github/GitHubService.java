@@ -217,7 +217,9 @@ public class GitHubService {
         sb.append("### AI Review Summary\n\n");
 
         for (ReviewComment c : comments) {
-            sb.append("- [")
+            sb.append("- ")
+                    .append(severityIcon(c.getSeverity()))
+                    .append(" [")
                     .append(c.getSeverity())
                     .append("] ")
                     .append(c.getIssue())
@@ -225,5 +227,19 @@ public class GitHubService {
         }
 
         return sb.toString();
+    }
+
+    private String severityIcon(String severity) {
+        if (severity == null) {
+            return ":information_source:";
+        }
+        switch (severity.toUpperCase()) {
+            case "ERROR":
+                return ":x:";
+            case "WARNING":
+                return ":warning:";
+            default:
+                return ":information_source:";
+        }
     }
 }

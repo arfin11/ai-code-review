@@ -1,8 +1,11 @@
 package com.arfin.code.review.config;
 
-import com.arfin.code.review.service.CodeReviewAI;
+import com.arfin.code.review.service.FileContextTool;
+import com.arfin.code.review.service.GeneralReviewAI;
+import com.arfin.code.review.service.ParallelReviewWorkflow;
+import com.arfin.code.review.service.SecurityReviewAI;
+import dev.langchain4j.agentic.AgenticServices;
 import dev.langchain4j.model.openai.OpenAiChatModel;
-import dev.langchain4j.service.AiServices;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -10,18 +13,44 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class AppConfig {
 
+    private final FileContextTool fileContextTool;
+
     @Value("${openai.api.key}")
     private String apiKey;
 
-    @Bean
-    public CodeReviewAI codeReviewAI() {
+    public AppConfig(FileContextTool fileContextTool) {
+        this.fileContextTool = fileContextTool;
+    }
 
-        OpenAiChatModel model = OpenAiChatModel.builder()
+    @Bean
+    public OpenAiChatModel openAiChatModel() {
+        return OpenAiChatModel.builder()
                 .apiKey(apiKey)
                 .modelName("gpt-4o-mini")
                 .temperature(0.2)
                 .build();
+    }
 
-        return AiServices.create(CodeReviewAI.class, model);
+    @Bean
+    public GeneralReviewAI generalReviewAI(OpenAiChatModel openAiChatModel) {
+        return AgenticServices.agentBuilder(GeneralReviewAI.class)
+                .chatModel(openAiChatModel)
+                .tools(fileContextTool)
+                .build();
+    }
+
+    @Bean
+    public SecurityReviewAI securityReviewAI(OpenAiChatModel openAiChatModel) {
+        return AgenticServices.agentBuilder(SecurityReviewAI.class)
+                .chatModel(openAiChatModel)
+                .tools(fileContextTool)
+                .build();
+    }
+
+    @Bean
+    public ParallelReviewWorkflow parallelReviewWorkflow(GeneralReviewAI generalReviewAI, SecurityReviewAI securityReviewAI) {
+        return AgenticServices.parallelBuilder(ParallelReviewWorkflow.class)
+                .subAgents(generalReviewAI, securityReviewAI)
+                .build();
     }
 }

@@ -3,119 +3,113 @@ package com.arfin.code.review.controller;
 import com.arfin.code.review.kafka.PRReviewProducer;
 import com.arfin.code.review.model.PRReviewEvent;
 import com.arfin.code.review.service.IdempotencyService;
-import com.arfin.code.review.service.PRReviewService;
 import com.arfin.code.review.service.RateLimiterService;
 import com.arfin.code.review.util.SignatureValidator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.AllArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
 import java.nio.charset.StandardCharsets;
-import java.util.List;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/webhook")
+@RequiredArgsConstructor
 public class GitHubWebhookController {
+
+    private static final Logger log = LoggerFactory.getLogger(GitHubWebhookController.class);
+    private static final Set<String> SUPPORTED_ACTIONS = Set.of("labeled", "synchronize");
 
     private final PRReviewProducer producer;
     private final IdempotencyService idempotencyService;
     private final RateLimiterService rateLimiterService;
+    private final ObjectMapper mapper;
 
-    private final ObjectMapper mapper = new ObjectMapper();
-    private static final Logger log = LoggerFactory.getLogger(GitHubWebhookController.class);
     @Value("${github.webhook.secret}")
     private String secret;
 
-    public GitHubWebhookController(PRReviewProducer producer,
-                                   IdempotencyService idempotencyService,RateLimiterService rateLimiterService) {
-        this.producer = producer;
-        this.idempotencyService = idempotencyService;
-        this.rateLimiterService=rateLimiterService;
-    }
     @PostMapping
     public ResponseEntity<String> handle(
             @RequestHeader("X-GitHub-Event") String event,
             @RequestHeader(value = "X-Hub-Signature-256", required = false) String signature,
             @RequestHeader("X-GitHub-Delivery") String deliveryId,
-            @RequestBody byte[] payloadBytes
-    ) {
+            @RequestBody byte[] payloadBytes) {
         try {
-            log.info("request received with event: {} and signature {}",event,signature);
-            // ✅ Signature validation
+            log.info("Request received for event: {} with signature {}", event, signature);
+
             if (!SignatureValidator.isValid(payloadBytes, signature, secret)) {
-                log.info("Invalid request, Hence returning");
+                log.warn("Invalid GitHub webhook signature for delivery {}", deliveryId);
                 return ResponseEntity.status(401).body("Invalid signature");
             }
 
-            String payload = new String(payloadBytes, StandardCharsets.UTF_8);
-
-            // ✅ Only handle PR events
             if (!"pull_request".equals(event)) {
-                log.info("Ignoring other webhook events.");
+                log.info("Ignoring non-pull_request webhook event: {}", event);
                 return ResponseEntity.ok("Ignored");
             }
 
-            JsonNode root = mapper.readTree(payload);
+            JsonNode payload = mapper.readTree(new String(payloadBytes, StandardCharsets.UTF_8));
+            String action = payload.path("action").asText();
 
-            String action = root.path("action").asText();
-
-            // 🚀 ✅ Handle BOTH cases
-            if (!List.of("labeled", "synchronize").contains(action)) {
-                log.info("Ignoring other webhook action events {}.",action);
+            if (!SUPPORTED_ACTIONS.contains(action)) {
+                log.info("Ignoring unsupported pull_request action: {}", action);
                 return ResponseEntity.ok("Ignored");
             }
 
-            // 🚨 Only check label for "labeled" event
-            if ("labeled".equals(action)) {
-                String label = root.path("label").path("name").asText();
-
-                if (!"ai-review".equals(label)) {
-                    return ResponseEntity.ok("Wrong label");
-                }
+            if ("labeled".equals(action) && !"ai-review".equals(payload.path("label").path("name").asText())) {
+                return ResponseEntity.ok("Wrong label");
             }
 
-            // ✅ Extract repo + PR
-            String repo = root.path("repository").path("full_name").asText();
-            int pr = root.path("pull_request").path("number").asInt();
-
-            // ✅ Extract installation ID safely
-            JsonNode installationNode = root.path("installation");
-
-            if (installationNode.isMissingNode() || installationNode.path("id").isMissingNode()) {
-                log.info("❌ Installation ID missing in webhook payload");
+            String repo = payload.path("repository").path("full_name").asText();
+            int installationId = extractInstallationId(payload);
+            if (installationId == -1) {
+                log.info("Installation ID missing in webhook payload for delivery {}", deliveryId);
                 return ResponseEntity.ok("Ignored - no installation id");
             }
 
-            int installationId = installationNode.path("id").asInt();
             if (!rateLimiterService.allowRequest(repo)) {
-                log.warn("Rate limit exceeded for {}", repo);
-                return ResponseEntity.status(429)
-                        .body("Rate limit exceeded");
+                log.warn("Rate limit exceeded for repo {}", repo);
+                return ResponseEntity.status(429).body("Rate limit exceeded");
             }
+
             if (idempotencyService.isDuplicate(deliveryId)) {
                 log.info("Duplicate event ignored: {}", deliveryId);
                 return ResponseEntity.ok("Duplicate");
             }
 
-            PRReviewEvent eventObj = new PRReviewEvent();
-            eventObj.setRepo(repo);
-            eventObj.setPrNumber(pr);
-            eventObj.setInstallationId(installationId);
-            eventObj.setDeliveryId(deliveryId);
-
+            PRReviewEvent eventObj = buildReviewEvent(payload, repo, installationId, deliveryId);
             producer.publish(eventObj);
-
             idempotencyService.markProcessed(deliveryId);
 
             return ResponseEntity.ok("Triggered");
-
         } catch (Exception e) {
-            log.error("exception occured while processing webhook event.",e);
+            log.error("Exception occurred while processing webhook event {}", deliveryId, e);
             return ResponseEntity.internalServerError().body("Error");
         }
+    }
+
+    private int extractInstallationId(JsonNode payload) {
+        JsonNode installationNode = payload.path("installation");
+        if (installationNode.isMissingNode() || installationNode.path("id").isMissingNode()) {
+            return -1;
+        }
+        return installationNode.path("id").asInt();
+    }
+
+    private PRReviewEvent buildReviewEvent(JsonNode payload, String repo, int installationId, String deliveryId) {
+        PRReviewEvent eventObj = new PRReviewEvent();
+        eventObj.setRepo(repo);
+        eventObj.setPrNumber(payload.path("pull_request").path("number").asInt());
+        eventObj.setInstallationId(installationId);
+        eventObj.setDeliveryId(deliveryId);
+        return eventObj;
     }
 }

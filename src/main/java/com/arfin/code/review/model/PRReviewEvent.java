@@ -10,5 +10,35 @@ public class PRReviewEvent {
     private int installationId;
     private String deliveryId; // important for idempotency
 
-    // getters/setters
+    public String getRepo() {
+        return repo;
+    }
+
+    public void setRepo(String repo) {
+        this.repo = repo;
+    }
+
+    public int getPrNumber() {
+        return prNumber;
+    }
+
+    public void setPrNumber(int prNumber) {
+        this.prNumber = prNumber;
+    }
+
+    public int getInstallationId() {
+        return installationId;
+    }
+
+    public void setInstallationId(int installationId) {
+        this.installationId = installationId;
+    }
+
+    public String getDeliveryId() {
+        return deliveryId;
+    }
+
+    public void setDeliveryId(String deliveryId) {
+        this.deliveryId = deliveryId;
+    }
 }
