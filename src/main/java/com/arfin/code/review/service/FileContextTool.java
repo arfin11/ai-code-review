@@ -4,6 +4,7 @@ import com.arfin.code.review.github.GitHubTokenProvider;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.Tool;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -18,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
+@Slf4j
 public class FileContextTool {
 
     private final GitHubTokenProvider tokenProvider;
@@ -34,6 +36,7 @@ public class FileContextTool {
     public AutoCloseable openReviewSession(String repo, int installationId, int prNumber) {
         ReviewSession session = new ReviewSession(repo, installationId, prNumber);
         reviewSession.set(session);
+        log.info("Opened review session for repo={}, installationId={}, prNumber={}", repo, installationId, prNumber);
         return () -> closeReviewSession(session);
     }
 
@@ -41,17 +44,21 @@ public class FileContextTool {
     public String fetchContext(String filePath, int targetLine) throws Exception {
         ReviewSession session = requireReviewSession();
         if (filePath == null || filePath.isBlank()) {
+            log.warn("fetchContext called with blank filePath for review session={}", session);
             return null;
         }
         if (targetLine <= 0) {
+            log.warn("fetchContext called with invalid targetLine={} for filePath={}", targetLine, filePath);
             return null;
         }
         if (!canFetchExtraContext(session, filePath)) {
+            log.warn("Extra context budget exceeded for repo={}, prNumber={}, filePath={}", session.repo(), session.prNumber(), filePath);
             return "Context fetch skipped: extra context budget exceeded for this PR/file.";
         }
 
         String fileContent = fetchFileContent(session.repo(), filePath, session.installationId());
         if (fileContent == null || fileContent.isBlank()) {
+            log.warn("No file content available for repo={}, filePath={}, targetLine={}", session.repo(), filePath, targetLine);
             return null;
         }
 
@@ -65,6 +72,8 @@ public class FileContextTool {
         }
 
         String result = snippet.toString();
+        log.info("Fetched extra context for repo={}, prNumber={}, filePath={}, targetLine={}, snippetChars={}",
+                session.repo(), session.prNumber(), filePath, targetLine, result.length());
         return result.length() > ReviewBudgetPolicy.MAX_CONTEXT_CHARS
                 ? result.substring(0, ReviewBudgetPolicy.MAX_CONTEXT_CHARS)
                 : result;
@@ -103,6 +112,7 @@ public class FileContextTool {
         prContextCallCounts.remove(session.prKey());
         String fileKeyPrefix = session.prKey() + ":file:";
         fileContextCallCounts.keySet().removeIf(key -> key.startsWith(fileKeyPrefix));
+        log.info("Closed review session for repo={}, installationId={}, prNumber={}", session.repo(), session.installationId(), session.prNumber());
     }
 
     private String fetchFileContent(String repo, String path, int installationId) throws Exception {
@@ -119,6 +129,7 @@ public class FileContextTool {
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() >= 300) {
             String body = response.body();
+            log.error("GitHub file fetch failed for repo={}, path={}, installationId={}, status={}, body={}", repo, path, installationId, response.statusCode(), body);
             throw new IllegalStateException("GitHub file fetch failed for repo=" + repo + ", path=" + path
                     + ", installationId=" + installationId + ", status=" + response.statusCode()
                     + ", body=" + body);

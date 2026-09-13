@@ -1,7 +1,9 @@
 package com.arfin.code.review.github;
 
 import com.arfin.code.review.util.PemUtils;
+import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
@@ -9,8 +11,9 @@ import org.springframework.stereotype.Component;
 import java.security.PrivateKey;
 import java.time.Instant;
 import java.util.Date;
-import io.jsonwebtoken.Jwts;
+
 @Component
+@Slf4j
 public class GitHubJwtProvider {
 
     @Value("${github.app.id}")
@@ -20,6 +23,7 @@ public class GitHubJwtProvider {
     private Resource key;
 
     public String generateJwt() throws Exception {
+        log.info("Generating GitHub App JWT for appId={}", appId);
 
         PrivateKey privateKey = PemUtils.readPrivateKey(
                 new String(key.getInputStream().readAllBytes())
@@ -27,11 +31,14 @@ public class GitHubJwtProvider {
 
         Instant now = Instant.now();
 
-        return Jwts.builder()
+        String jwt = Jwts.builder()
                 .setIssuer(appId)
                 .setIssuedAt(Date.from(now.minusSeconds(60)))
                 .setExpiration(Date.from(now.plusSeconds(600)))
                 .signWith(privateKey, SignatureAlgorithm.RS256)
                 .compact();
+
+        log.debug("GitHub App JWT generated successfully for appId={}", appId);
+        return jwt;
     }
 }

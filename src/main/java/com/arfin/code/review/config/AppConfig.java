@@ -6,11 +6,13 @@ import com.arfin.code.review.service.ParallelReviewWorkflow;
 import com.arfin.code.review.service.SecurityReviewAI;
 import dev.langchain4j.agentic.AgenticServices;
 import dev.langchain4j.model.openai.OpenAiChatModel;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
+@Slf4j
 public class AppConfig {
 
     private final FileContextTool fileContextTool;
@@ -24,6 +26,7 @@ public class AppConfig {
 
     @Bean
     public OpenAiChatModel openAiChatModel() {
+        log.info("Initializing OpenAI chat model with modelName=gpt-4o-mini");
         return OpenAiChatModel.builder()
                 .apiKey(apiKey)
                 .modelName("gpt-4o-mini")
@@ -33,6 +36,7 @@ public class AppConfig {
 
     @Bean
     public GeneralReviewAI generalReviewAI(OpenAiChatModel openAiChatModel) {
+        log.info("Building general review agent");
         return AgenticServices.agentBuilder(GeneralReviewAI.class)
                 .chatModel(openAiChatModel)
                 .tools(fileContextTool)
@@ -41,6 +45,7 @@ public class AppConfig {
 
     @Bean
     public SecurityReviewAI securityReviewAI(OpenAiChatModel openAiChatModel) {
+        log.info("Building security review agent");
         return AgenticServices.agentBuilder(SecurityReviewAI.class)
                 .chatModel(openAiChatModel)
                 .tools(fileContextTool)
@@ -49,6 +54,7 @@ public class AppConfig {
 
     @Bean
     public ParallelReviewWorkflow parallelReviewWorkflow(GeneralReviewAI generalReviewAI, SecurityReviewAI securityReviewAI) {
+        log.info("Building parallel review workflow with general and security agents");
         return AgenticServices.parallelBuilder(ParallelReviewWorkflow.class)
                 .subAgents(generalReviewAI, securityReviewAI)
                 .build();

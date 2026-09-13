@@ -1,6 +1,7 @@
 package com.arfin.code.review.service;
 
 import com.arfin.code.review.model.ReviewFinding;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
@@ -11,9 +12,11 @@ import java.util.Locale;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 public class ReviewAggregator {
 
     public List<ReviewFinding> aggregate(List<ReviewFinding>... groups) {
+        log.info("Aggregating review findings from {} groups", groups == null ? 0 : groups.length);
         Map<String, ReviewFinding> unique = new LinkedHashMap<>();
 
         for (List<ReviewFinding> group : groups) {
@@ -34,9 +37,11 @@ public class ReviewAggregator {
             }
         }
 
-        return suppressCommonIssues(unique.values().stream().collect(Collectors.toList())).stream()
+        List<ReviewFinding> aggregated = suppressCommonIssues(unique.values().stream().collect(Collectors.toList())).stream()
                 .sorted(Comparator.comparingInt(this::severityWeight).reversed())
                 .collect(Collectors.toList());
+        log.info("Review aggregation complete with {} unique findings", aggregated.size());
+        return aggregated;
     }
 
     private List<ReviewFinding> suppressCommonIssues(List<ReviewFinding> findings) {

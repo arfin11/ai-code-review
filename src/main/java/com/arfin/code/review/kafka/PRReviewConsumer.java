@@ -3,8 +3,7 @@ package com.arfin.code.review.kafka;
 import com.arfin.code.review.controller.GitHubWebhookController;
 import com.arfin.code.review.model.PRReviewEvent;
 import com.arfin.code.review.service.PRReviewService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.annotation.RetryableTopic;
 import org.springframework.kafka.support.Acknowledgment;
@@ -12,11 +11,10 @@ import org.springframework.retry.annotation.Backoff;
 import org.springframework.stereotype.Component;
 
 @Component
+@Slf4j
 public class PRReviewConsumer {
 
     private final PRReviewService service;
-
-    private static final Logger log = LoggerFactory.getLogger(PRReviewConsumer.class);
 
     public PRReviewConsumer(PRReviewService service) {
         this.service = service;

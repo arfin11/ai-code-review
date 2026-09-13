@@ -8,8 +8,7 @@ import com.arfin.code.review.util.SignatureValidator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,9 +23,9 @@ import java.util.Set;
 @RestController
 @RequestMapping("/webhook")
 @RequiredArgsConstructor
+@Slf4j
 public class GitHubWebhookController {
 
-    private static final Logger log = LoggerFactory.getLogger(GitHubWebhookController.class);
     private static final Set<String> SUPPORTED_ACTIONS = Set.of("labeled", "synchronize");
 
     private final PRReviewProducer producer;

@@ -1,21 +1,29 @@
 package com.arfin.code.review.util;
 
+import lombok.extern.slf4j.Slf4j;
+
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.HexFormat;
 
+@Slf4j
 public class SignatureValidator {
 
     public static boolean isValid(byte[] payload, String signature, String secret) {
         try {
             String expected = "sha256=" + hmacSha256(payload, secret);
-            return MessageDigest.isEqual(
-                    expected.getBytes(),
-                    signature.getBytes()
+            boolean valid = MessageDigest.isEqual(
+                    expected.getBytes(StandardCharsets.UTF_8),
+                    signature == null ? new byte[0] : signature.getBytes(StandardCharsets.UTF_8)
             );
+            if (!valid) {
+                log.warn("Webhook signature validation failed for payload length={} and signaturePresent={}",
+                        payload == null ? 0 : payload.length, signature != null && !signature.isBlank());
+            }
+            return valid;
         } catch (Exception e) {
+            log.error("Error while validating webhook signature", e);
             return false;
         }
     }

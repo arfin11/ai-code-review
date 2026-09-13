@@ -1,6 +1,7 @@
 package com.arfin.code.review.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
@@ -10,6 +11,7 @@ import java.util.Collections;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class RateLimiterService {
 
     private final StringRedisTemplate redisTemplate;
@@ -21,6 +23,7 @@ public class RateLimiterService {
     public boolean allowRequest(String repository) {
 
         String key = "rate-limit:" + repository;
+        log.info("Evaluating rate limit for repository={}, key={}", repository, key);
 
         Long count = redisTemplate.execute(
                 rateLimiterScript,
@@ -28,6 +31,13 @@ public class RateLimiterService {
                 "60"
         );
 
-        return count != null && count <= LIMIT;
+        boolean allowed = count != null && count <= LIMIT;
+        if (allowed) {
+            log.info("Rate limit check passed for repository={}, count={}", repository, count);
+            return true;
+        }
+
+        log.warn("Rate limit exceeded for repository={}, count={}", repository, count);
+        return false;
     }
 }

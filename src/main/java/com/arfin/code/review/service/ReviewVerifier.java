@@ -1,15 +1,18 @@
 package com.arfin.code.review.service;
 
 import com.arfin.code.review.model.ReviewFinding;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
 
 @Service
+@Slf4j
 public class ReviewVerifier {
 
     public List<ReviewFinding> verify(List<ReviewFinding> findings) {
+        log.info("Verifying {} findings before publishing", findings == null ? 0 : findings.size());
         List<ReviewFinding> valid = new ArrayList<>();
 
         for (ReviewFinding finding : findings) {
@@ -42,6 +45,7 @@ public class ReviewVerifier {
             valid.add(finding);
         }
 
+        log.info("Verification passed for {} findings", valid.size());
         return valid;
     }
 

@@ -2,12 +2,14 @@ package com.arfin.code.review.service;
 
 import com.arfin.code.review.model.FileDiff;
 import com.arfin.code.review.model.ReviewContext;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
 
 @Service
+@Slf4j
 public class FileContextService {
 
     private static final int MAX_FILES_PER_PR = ReviewBudgetPolicy.MAX_FILES_PER_PR;
@@ -16,9 +18,11 @@ public class FileContextService {
     public List<ReviewContext> buildContexts(List<FileDiff> files) {
         List<FileDiff> boundedFiles = files == null ? List.of() : files.stream().limit(MAX_FILES_PER_PR).toList();
         List<ReviewContext> contexts = new ArrayList<>();
+        log.info("Building review contexts for {} files (limit={})", boundedFiles.size(), MAX_FILES_PER_PR);
 
         for (FileDiff file : boundedFiles) {
             if (file == null || file.getFilename() == null || file.getFilename().isBlank()) {
+                log.warn("Skipping invalid file diff entry during context building");
                 continue;
             }
 
@@ -32,8 +36,11 @@ public class FileContextService {
             context.setChangedLines(changedLines);
             context.setFileContent(baseSnippet);
             contexts.add(context);
+            log.debug("Prepared review context for file={} changedLines={} snippetChars={}",
+                    file.getFilename(), changedLines.size(), baseSnippet.length());
         }
 
+        log.info("Context building complete. Prepared {} contexts", contexts.size());
         return contexts;
     }
 

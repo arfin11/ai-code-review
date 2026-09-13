@@ -6,8 +6,7 @@ import com.arfin.code.review.model.ReviewComment;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -20,11 +19,11 @@ import java.util.Map;
 
 @Service
 @Data
+@Slf4j
 public class GitHubService {
 
     private final HttpClient client = HttpClient.newHttpClient();
     private final GitHubTokenProvider tokenProvider;
-    private static final Logger log = LoggerFactory.getLogger(GitHubService.class);
 
 
 
@@ -42,16 +41,16 @@ public class GitHubService {
                 .uri(URI.create(url))
                 .header("Authorization", "Bearer " + token)
                 .build();
-        log.info("Fetching PR files: {} ",request.toString());
+        log.info("Fetching PR files for repo={}, pullRequest={}, installationId={}", repo, pr, installationId);
         HttpResponse<String> response =
                 client.send(request, HttpResponse.BodyHandlers.ofString());
-        log.info("Fetched files: {} ",response.body());
+        log.info("PR files response received for repo={}, pullRequest={}, statusCode={}", repo, pr, response.statusCode());
         JsonNode array = mapper.readTree(response.body());
 
         List<FileDiff> files = new ArrayList<>();
 
         for (JsonNode node : array) {
-            if (node.get("patch").isNull()) continue;
+            if (node.get("patch") == null || node.get("patch").isNull()) continue;
 
             files.add(new FileDiff(
                     node.get("filename").asText(),
@@ -59,6 +58,7 @@ public class GitHubService {
             ));
         }
 
+        log.info("Resolved {} file diffs for repo={}, pullRequest={}", files.size(), repo, pr);
         return files;
     }
 
@@ -71,12 +71,14 @@ public class GitHubService {
                 .header("Authorization", "Bearer " + token)
                 .build();
 
+        log.info("Fetching latest SHA for repo={}, pullRequest={}, installationId={}", repo, pr, installationId);
         HttpResponse<String> response =
                 client.send(request, HttpResponse.BodyHandlers.ofString());
 
         JsonNode json = mapper.readTree(response.body());
-
-        return json.get("head").get("sha").asText();
+        String sha = json.get("head").get("sha").asText();
+        log.info("Resolved latest SHA for repo={}, pullRequest={}, sha={}", repo, pr, sha);
+        return sha;
     }
 
     public void postReview(String repo, int pr,
@@ -98,7 +100,9 @@ public class GitHubService {
                 .header("Content-Type", "application/json")
                 .build();
 
-        client.send(request, HttpResponse.BodyHandlers.ofString());
+        log.info("Posting review for repo={}, pullRequest={}, sha={}, comments={}", repo, pr, sha, comments == null ? 0 : comments.size());
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        log.info("Review post completed for repo={}, pullRequest={}, statusCode={}", repo, pr, response.statusCode());
     }
     public void setCommitStatus(String repo, String sha, int installationId, boolean success) throws Exception {
 
@@ -118,13 +122,11 @@ public class GitHubService {
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
 
-        //client.send(request, HttpResponse.BodyHandlers.ofString());
-
+        log.info("Setting commit status for repo={}, sha={}, status={}", repo, sha, state);
         HttpResponse<String> response =
                 client.send(request, HttpResponse.BodyHandlers.ofString());
 
-        log.info("STATUS API RESPONSE: " + response.body());
-        log.info("STATUS CODE: " + response.statusCode());
+        log.info("Commit status update for repo={}, sha={}, statusCode={}", repo, sha, response.statusCode());
     }
     public void postComment(String repo, int pr, int installationId, String message) throws Exception {
 
@@ -143,7 +145,9 @@ public class GitHubService {
                 .header("Content-Type", "application/json")
                 .build();
 
-        client.send(request, HttpResponse.BodyHandlers.ofString());
+        log.info("Posting issue comment for repo={}, pullRequest={}", repo, pr);
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        log.info("Issue comment posted for repo={}, pullRequest={}, statusCode={}", repo, pr, response.statusCode());
     }
     public void createCheckRun(String repo,
                                String sha,
@@ -194,11 +198,11 @@ public class GitHubService {
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
 
+        log.info("Creating check run for repo={}, sha={}, conclusion={}, annotationCount={}", repo, sha, conclusion, annotations.size());
         HttpResponse<String> response =
                 client.send(request, HttpResponse.BodyHandlers.ofString());
 
-        log.info("CHECK RUN STATUS: " + response.statusCode());
-        log.info("CHECK RUN BODY: " + response.body());
+        log.info("Check run created for repo={}, sha={}, statusCode={}", repo, sha, response.statusCode());
     }
     private String mapSeverity(String severity) {
         switch (severity.toUpperCase()) {
