@@ -1,15 +1,12 @@
 package com.arfin.code.review.service;
 
-import com.arfin.code.review.controller.GitHubWebhookController;
 import com.arfin.code.review.model.FileDiff;
 import com.arfin.code.review.model.ReviewComment;
-import com.arfin.code.review.model.ReviewFinding;
 import com.arfin.code.review.model.ReviewContext;
-import com.arfin.code.review.model.ReviewResult;
+import com.arfin.code.review.model.ReviewFinding;
 import com.arfin.code.review.model.ReviewResponse;
+import com.arfin.code.review.model.ReviewResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.langchain4j.agentic.scope.AgenticScope;
-import dev.langchain4j.agentic.scope.ResultWithAgenticScope;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
@@ -19,6 +16,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -28,23 +27,29 @@ public class PRReviewOrchestrator {
 
     private final FileContextService fileContextService;
     private final FileContextTool fileContextTool;
-    private final ParallelReviewWorkflow parallelReviewWorkflow;
+    private final GeneralReviewAI generalReviewAI;
+    private final SecurityReviewAI securityReviewAI;
     private final ReviewAggregator reviewAggregator;
     private final ReviewVerifier reviewVerifier;
+    private final ReviewPromptService reviewPromptService;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final String TRACE_ID_KEY = "traceId";
-    private static final Pattern ANCHOR_PATTERN = Pattern.compile("\"anchor\"\\s*:\\s*(.+?)(\\s*,\\s*\"source\")", Pattern.DOTALL);
+    private static final Pattern ANCHOR_PATTERN = Pattern.compile("\\\"anchor\\\"\\s*:\\s*(.+?)(\\s*,\\s*\\\"source\\\")", Pattern.DOTALL);
 
     public PRReviewOrchestrator(FileContextService fileContextService,
-                               FileContextTool fileContextTool,
-                               ParallelReviewWorkflow parallelReviewWorkflow,
-                               ReviewAggregator reviewAggregator,
-                               ReviewVerifier reviewVerifier) {
+                                FileContextTool fileContextTool,
+                                GeneralReviewAI generalReviewAI,
+                                SecurityReviewAI securityReviewAI,
+                                ReviewAggregator reviewAggregator,
+                                ReviewVerifier reviewVerifier,
+                                ReviewPromptService reviewPromptService) {
         this.fileContextService = fileContextService;
         this.fileContextTool = fileContextTool;
-        this.parallelReviewWorkflow = parallelReviewWorkflow;
+        this.generalReviewAI = generalReviewAI;
+        this.securityReviewAI = securityReviewAI;
         this.reviewAggregator = reviewAggregator;
         this.reviewVerifier = reviewVerifier;
+        this.reviewPromptService = reviewPromptService;
     }
 
     public List<ReviewComment> review(String repo, int prNumber, List<FileDiff> files, int installationId) throws Exception {
@@ -57,13 +62,15 @@ public class PRReviewOrchestrator {
             log.info("Built {} review contexts for PR {}", contexts == null ? 0 : contexts.size(), prNumber);
 
             String reviewInput = buildReviewInput(contexts);
-            log.info("Submitting review payload to parallel workflow. fileCount={}, snippetSize={}",
-                    contexts == null ? 0 : contexts.size(), reviewInput.length());
+            String language = detectLanguage(contexts);
+            String generalPrompt = reviewPromptService.generalPrompt(language);
+            String securityPrompt = reviewPromptService.securityPrompt(language);
+            log.info("Submitting review payload to review agents. fileCount={}, snippetSize={}, language={}",
+                    contexts == null ? 0 : contexts.size(), reviewInput.length(), language);
 
             ReviewResult reviewResult;
             try (AutoCloseable ignored = fileContextTool.openReviewSession(repo, installationId, prNumber)) {
-                ResultWithAgenticScope workflowResult = runWorkflowWithCurrentMdc(reviewInput);
-                reviewResult = extractReviewResult(workflowResult);
+                reviewResult = runReviewsWithCurrentMdc(language, generalPrompt, securityPrompt, reviewInput);
             }
 
             List<ReviewFinding> merged = reviewAggregator.aggregate(
@@ -111,27 +118,64 @@ public class PRReviewOrchestrator {
         return sb.toString();
     }
 
-    private ResultWithAgenticScope runWorkflowWithCurrentMdc(String reviewInput) {
+    private String detectLanguage(List<ReviewContext> contexts) {
+        if (contexts == null || contexts.isEmpty()) {
+            return "java";
+        }
+        for (ReviewContext context : contexts) {
+            if (context != null && context.getFileName() != null && context.getFileName().endsWith(".java")) {
+                return "java";
+            }
+        }
+        return "java";
+    }
+
+    private ReviewResult runReviewsWithCurrentMdc(String language,
+                                                  String generalPrompt,
+                                                  String securityPrompt,
+                                                  String reviewInput) {
         Map<String, String> mdcContext = MDC.getCopyOfContextMap();
         if (mdcContext == null || mdcContext.isEmpty()) {
-            return parallelReviewWorkflow.run(reviewInput);
+            return runReviews(language, generalPrompt, securityPrompt, reviewInput);
         }
 
         Map<String, String> contextToRestore = new HashMap<>(mdcContext);
         if (!contextToRestore.containsKey(TRACE_ID_KEY)) {
-            return parallelReviewWorkflow.run(reviewInput);
+            return runReviews(language, generalPrompt, securityPrompt, reviewInput);
         }
 
         Map<String, String> previousContext = MDC.getCopyOfContextMap();
         try {
             MDC.setContextMap(contextToRestore);
-            return parallelReviewWorkflow.run(reviewInput);
+            return runReviews(language, generalPrompt, securityPrompt, reviewInput);
         } finally {
             if (previousContext == null || previousContext.isEmpty()) {
                 MDC.clear();
             } else {
                 MDC.setContextMap(previousContext);
             }
+        }
+    }
+
+    private ReviewResult runReviews(String language,
+                                    String generalPrompt,
+                                    String securityPrompt,
+                                    String reviewInput) {
+        CompletableFuture<ReviewResponse> generalFuture = CompletableFuture.supplyAsync(
+                () -> invokeReview(generalReviewAI, language, generalPrompt, reviewInput, "general")
+        );
+        CompletableFuture<ReviewResponse> securityFuture = CompletableFuture.supplyAsync(
+                () -> invokeReview(securityReviewAI, language, securityPrompt, reviewInput, "security")
+        );
+
+        try {
+            return new ReviewResult(generalFuture.join(), securityFuture.join());
+        } catch (CompletionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new IllegalStateException("Review agent execution failed", cause);
         }
     }
 
@@ -142,30 +186,13 @@ public class PRReviewOrchestrator {
         return response.getComments();
     }
 
-    private ReviewResult extractReviewResult(ResultWithAgenticScope workflowResult) {
-        if (workflowResult == null || workflowResult.agenticScope() == null) {
-            throw new IllegalStateException("Parallel review workflow returned no agentic scope");
-        }
-
-        AgenticScope scope = workflowResult.agenticScope();
-        return new ReviewResult(
-                readReviewResponse(scope, "generalFindings"),
-                readReviewResponse(scope, "securityFindings")
-        );
-    }
-
-    private ReviewResponse readReviewResponse(AgenticScope scope, String key) {
-        Object state = scope.readState(key);
-        if (state == null) {
-            return null;
-        }
-        if (state instanceof ReviewResponse reviewResponse) {
-            return reviewResponse;
-        }
-        if (state instanceof String rawResponse) {
-            return parseReviewResponse(rawResponse, key);
-        }
-        throw new IllegalStateException("Unexpected workflow state for key '" + key + "': " + state.getClass().getName());
+    private ReviewResponse invokeReview(ReviewAgent agent,
+                                        String language,
+                                        String systemPrompt,
+                                        String reviewInput,
+                                        String agentName) {
+        String rawResponse = agent.review(language, systemPrompt, reviewInput);
+        return parseReviewResponse(rawResponse, agentName);
     }
 
     private ReviewResponse parseReviewResponse(String rawResponse, String key) {

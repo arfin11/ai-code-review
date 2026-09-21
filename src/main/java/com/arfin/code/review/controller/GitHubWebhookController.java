@@ -3,6 +3,7 @@ package com.arfin.code.review.controller;
 import com.arfin.code.review.kafka.PRReviewProducer;
 import com.arfin.code.review.model.PRReviewEvent;
 import com.arfin.code.review.service.IdempotencyService;
+import com.arfin.code.review.service.PRReviewStatusService;
 import com.arfin.code.review.service.RateLimiterService;
 import com.arfin.code.review.util.SignatureValidator;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -33,6 +34,7 @@ public class GitHubWebhookController {
     private final PRReviewProducer producer;
     private final IdempotencyService idempotencyService;
     private final RateLimiterService rateLimiterService;
+    private final PRReviewStatusService reviewStatusService;
     private final ObjectMapper mapper;
 
     @Value("${github.webhook.secret}")
@@ -87,6 +89,7 @@ public class GitHubWebhookController {
             }
 
             PRReviewEvent eventObj = buildReviewEvent(payload, repo, installationId, deliveryId);
+            reviewStatusService.markReceived(eventObj);
             producer.publish(eventObj);
             idempotencyService.markProcessed(deliveryId);
 

@@ -26,7 +26,7 @@ public class PRReviewService {
         this.prReviewOrchestrator = prReviewOrchestrator;
     }
 
-    public void reviewPR(String repo, int pr, int installationId) {
+    public void reviewPR(String repo, int pr, int installationId) throws PRReviewException {
         MDC.put("repo", repo);
         MDC.put("prNumber", String.valueOf(pr));
         MDC.put("installationId", String.valueOf(installationId));
@@ -48,9 +48,11 @@ public class PRReviewService {
 
             publishResults(repo, pr, installationId, comments);
             log.info("PR review workflow completed successfully");
+        } catch (PRReviewException e) {
+            throw e;
         } catch (Exception e) {
             log.error("PR review workflow failed", e);
-            throw new RuntimeException("PR Review failed", e);
+            throw new PRReviewException("PR review failed for repo=" + repo + ", pr=" + pr, e);
         } finally {
             MDC.remove("repo");
             MDC.remove("prNumber");

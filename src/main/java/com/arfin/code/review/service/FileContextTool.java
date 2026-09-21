@@ -25,8 +25,8 @@ public class FileContextTool {
     private final GitHubTokenProvider tokenProvider;
     private final HttpClient client = HttpClient.newHttpClient();
     private final ObjectMapper mapper = new ObjectMapper();
-    private final Map<String, AtomicInteger> prContextCallCounts = new ConcurrentHashMap<>();
-    private final Map<String, AtomicInteger> fileContextCallCounts = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> prFullFileContextCallCounts = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> fileFullFileContextCallCounts = new ConcurrentHashMap<>();
     private final InheritableThreadLocal<ReviewSession> reviewSession = new InheritableThreadLocal<>();
 
     public FileContextTool(GitHubTokenProvider tokenProvider) {
@@ -40,54 +40,41 @@ public class FileContextTool {
         return () -> closeReviewSession(session);
     }
 
-    @Tool("Fetch a small surrounding code snippet around a changed line in the current pull request file when more local context is needed for review.")
-    public String fetchContext(String filePath, int targetLine) throws Exception {
+    @Tool("Fetch the full content of a file in the current PR when file-level review context is required.")
+    public String fetchFullFile(String filePath) throws Exception {
         ReviewSession session = requireReviewSession();
         if (filePath == null || filePath.isBlank()) {
-            log.warn("fetchContext called with blank filePath for review session={}", session);
+            log.warn("fetchFullFile called with blank filePath for review session={}", session);
             return null;
         }
-        if (targetLine <= 0) {
-            log.warn("fetchContext called with invalid targetLine={} for filePath={}", targetLine, filePath);
-            return null;
-        }
-        if (!canFetchExtraContext(session, filePath)) {
-            log.warn("Extra context budget exceeded for repo={}, prNumber={}, filePath={}", session.repo(), session.prNumber(), filePath);
-            return "Context fetch skipped: extra context budget exceeded for this PR/file.";
+        if (!canFetchFullFileContext(session, filePath)) {
+            log.warn("Full-file context budget exceeded for repo={}, prNumber={}, filePath={}", session.repo(), session.prNumber(), filePath);
+            return "Full-file context fetch skipped: full-file budget exceeded for this PR/file.";
         }
 
         String fileContent = fetchFileContent(session.repo(), filePath, session.installationId());
         if (fileContent == null || fileContent.isBlank()) {
-            log.warn("No file content available for repo={}, filePath={}, targetLine={}", session.repo(), filePath, targetLine);
+            log.warn("No file content available for repo={}, filePath={}", session.repo(), filePath);
             return null;
         }
 
-        String[] lines = fileContent.split("\\R");
-        int start = Math.max(1, targetLine - ReviewBudgetPolicy.MAX_SURROUNDING_LINES);
-        int end = Math.min(lines.length, targetLine + ReviewBudgetPolicy.MAX_SURROUNDING_LINES);
-
-        StringBuilder snippet = new StringBuilder();
-        for (int i = start; i <= end; i++) {
-            snippet.append("[LINE ").append(i).append("] ").append(lines[i - 1]).append("\n");
-        }
-
-        String result = snippet.toString();
-        log.info("Fetched extra context for repo={}, prNumber={}, filePath={}, targetLine={}, snippetChars={}",
-                session.repo(), session.prNumber(), filePath, targetLine, result.length());
-        return result.length() > ReviewBudgetPolicy.MAX_CONTEXT_CHARS
-                ? result.substring(0, ReviewBudgetPolicy.MAX_CONTEXT_CHARS)
-                : result;
+        String result = fileContent.length() > ReviewBudgetPolicy.MAX_FULL_FILE_CHARS
+                ? fileContent.substring(0, ReviewBudgetPolicy.MAX_FULL_FILE_CHARS)
+                : fileContent;
+        log.info("Fetched full file for repo={}, prNumber={}, filePath={}, chars={}",
+                session.repo(), session.prNumber(), filePath, result.length());
+        return result;
     }
 
-    private boolean canFetchExtraContext(ReviewSession session, String filePath) {
+    private boolean canFetchFullFileContext(ReviewSession session, String filePath) {
         String prKey = session.prKey();
-        String fileKey = prKey + ":file:" + filePath;
+        String fileKey = prKey + ":fullfile:" + filePath;
 
-        AtomicInteger prCalls = prContextCallCounts.computeIfAbsent(prKey, key -> new AtomicInteger(0));
-        AtomicInteger fileCalls = fileContextCallCounts.computeIfAbsent(fileKey, key -> new AtomicInteger(0));
+        AtomicInteger prCalls = prFullFileContextCallCounts.computeIfAbsent(prKey, key -> new AtomicInteger(0));
+        AtomicInteger fileCalls = fileFullFileContextCallCounts.computeIfAbsent(fileKey, key -> new AtomicInteger(0));
 
-        if (prCalls.get() >= ReviewBudgetPolicy.MAX_EXTRA_CONTEXT_CALLS_PER_PR
-                || fileCalls.get() >= ReviewBudgetPolicy.MAX_EXTRA_CONTEXT_CALLS_PER_FILE) {
+        if (prCalls.get() >= ReviewBudgetPolicy.MAX_FULL_FILE_CONTEXT_CALLS_PER_PR
+                || fileCalls.get() >= ReviewBudgetPolicy.MAX_FULL_FILE_CONTEXT_CALLS_PER_FILE) {
             return false;
         }
 
@@ -109,9 +96,9 @@ public class FileContextTool {
         if (Objects.equals(activeSession, session)) {
             reviewSession.remove();
         }
-        prContextCallCounts.remove(session.prKey());
-        String fileKeyPrefix = session.prKey() + ":file:";
-        fileContextCallCounts.keySet().removeIf(key -> key.startsWith(fileKeyPrefix));
+        prFullFileContextCallCounts.remove(session.prKey());
+        String fullFileKeyPrefix = session.prKey() + ":fullfile:";
+        fileFullFileContextCallCounts.keySet().removeIf(key -> key.startsWith(fullFileKeyPrefix));
         log.info("Closed review session for repo={}, installationId={}, prNumber={}", session.repo(), session.installationId(), session.prNumber());
     }
 
