@@ -378,8 +378,10 @@ On success, GitHub will show:
 
 ### Inline review comment in pull request changes view
 
-![Inline review comment in PR changes view](C:\Users\My Laptop\AppData\Local\github-copilot\intellij\images\pasted_image_1_1790016157897.png)
+<img width="948" height="464" alt="image" src="https://github.com/user-attachments/assets/5d57f297-da7d-4b43-a861-5584fbeb1665" />
+
 
 ### AI Code Review check run summary and annotations
 
-![AI Code Review check run summary and annotations](C:\Users\My Laptop\AppData\Local\github-copilot\intellij\images\pasted_image_2_1790016246802.png)
+<img width="941" height="470" alt="image" src="https://github.com/user-attachments/assets/3d9916f2-ddc2-494c-9df1-60f6401a12a1" />
+
