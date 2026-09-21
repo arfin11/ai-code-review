@@ -1,284 +1,379 @@
-# 🚀 AI-Powered GitHub PR Review System
+# AI-Powered GitHub PR Review System
 
-An intelligent, automated code review system that integrates with GitHub Pull Requests and provides actionable feedback using LLMs.
+Automated pull request review for Java repositories using a GitHub App, Spring Boot, Kafka, Redis, PostgreSQL, and LLM-based analysis through LangChain4j.
 
----
+## Overview
 
-## ✨ Overview
+This service listens for GitHub pull request webhooks, validates and deduplicates them, pushes accepted review jobs to Kafka, reviews changed Java files with AI agents, and publishes the result back to GitHub as commit statuses and check-run annotations.
 
-This system automatically reviews Pull Requests and adds **inline comments + status checks** using AI.
+The current implementation is optimized around:
 
-It simulates real-world tools like **CodeRabbit / GitHub Copilot Reviews**, built using:
+- GitHub App installation authentication
+- Asynchronous review execution through Kafka
+- Java-file-only review scope
+- Review status persistence in PostgreSQL
+- Rate limiting in Redis
+- Observability through Prometheus and OTLP tracing
 
-* Java + Spring Boot
-* GitHub App API
-* LLM (via LangChain4j)
+## End-to-end flow
 
----
+1. A GitHub App webhook hits `POST /webhook`.
+2. The controller validates the signature, filters unsupported events/actions, checks repository rate limits, and blocks duplicate delivery IDs.
+3. Accepted requests are stored as `RECEIVED` and published to Kafka.
+4. The Kafka consumer marks the review `IN_PROGRESS` and starts PR review execution.
+5. The review service fetches PR files from GitHub and keeps only reviewable Java files.
+6. The orchestrator builds diff-based review context and opens a bounded full-file fetch session for the AI tools.
+7. General and security review agents run in parallel.
+8. Findings are aggregated, deduplicated, severity-normalized, and filtered for validity.
+9. The service posts commit status and a GitHub check run with inline annotations.
+10. Review status is marked `SUCCESS` or `FAILED`.
 
-## 🔌 GitHub App Integration (How Users Use This)
-
-👉 Install the GitHub App:
-
-https://github.com/apps/arfin-ai-code-reviewer
-
-### 📌 Steps:
-
-1. Open the link above
-2. Click **Install App**
-3. Select your repository
-4. Done ✅
-
----
-
-### 🔁 How it works
+## Detailed block diagram
 
 ```text
-User installs GitHub App
-        ↓
-GitHub sends webhook to your service
-        ↓
-Your service reviews PR
-        ↓
-Comments + Check Run appear in PR
+                                          +------------------------------+
+                                          |          GitHub App          |
+                                          |  PR labeled / synchronize    |
+                                          +--------------+---------------+
+                                                         |
+                                                         | webhook
+                                                         v
++--------------------------------------------------------------------------------------------------+
+|                                        Spring Boot Application                                   |
+|                                                                                                  |
+|  +-------------------------------+                                                                |
+|  | TraceIdFilter                 |                                                                |
+|  | - creates/propagates traceId  |                                                                |
+|  +---------------+---------------+                                                                |
+|                  |                                                                                |
+|                  v                                                                                |
+|  +-------------------------------+      +---------------------+      +-------------------------+  |
+|  | GitHubWebhookController       |----->| SignatureValidator  |      | ObjectMapper           |  |
+|  | - accepts /webhook            |      | - HMAC verification |      | - payload parsing      |  |
+|  | - event/action filtering      |      +---------------------+      +-------------------------+  |
+|  | - label check: ai-review      |                                                                |
+|  +---------------+---------------+                                                                |
+|                  |                                                                                |
+|      +-----------+-----------+                                                                    |
+|      |                       |                                                                    |
+|      v                       v                                                                    |
+|  +-----------+         +----------------------+                                                   |
+|  | Redis     |         | IdempotencyService   |                                                   |
+|  | rate limit|         | + ProcessedEvent JPA |                                                   |
+|  +-----+-----+         +----------+-----------+                                                   |
+|        |                           |                                                               |
+|        +------------- allow -------+                                                               |
+|                                    |                                                               |
+|                                    v                                                               |
+|                        +---------------------------+                                               |
+|                        | PRReviewStatusService     |                                               |
+|                        | - mark RECEIVED          |                                               |
+|                        | - persist status rows    |                                               |
+|                        +------------+--------------+                                               |
+|                                     |                                                              |
+|                                     v                                                              |
+|                        +---------------------------+                                               |
+|                        | PRReviewProducer          |                                               |
+|                        | - publish PRReviewEvent   |                                               |
+|                        +------------+--------------+                                               |
++-------------------------------------|------------------------------------------------------------+
+                                      |
+                                      | Kafka topic: ai-review-events-v2
+                                      v
+                           +---------------------------+
+                           | PRReviewConsumer          |
+                           | - mark IN_PROGRESS        |
+                           | - retry on failure        |
+                           | - DLT handler             |
+                           +------------+--------------+
+                                        |
+                                        v
+                           +---------------------------+
+                           | PRReviewService           |
+                           | - fetch PR files          |
+                           | - keep .java only         |
+                           | - cap files per PR        |
+                           +------------+--------------+
+                                        |
+                                        v
+                           +---------------------------+
+                           | GitHubService             |
+                           | - list PR files           |
+                           | - fetch latest SHA        |
+                           | - create check run        |
+                           | - set commit status       |
+                           +------------+--------------+
+                                        |
+                                        v
+                           +---------------------------+
+                           | PRReviewOrchestrator      |
+                           | - build contexts          |
+                           | - run review agents       |
+                           | - aggregate/verify        |
+                           +------------+--------------+
+                                        |
+                 +----------------------+----------------------+
+                 |                                             |
+                 v                                             v
+     +---------------------------+                 +---------------------------+
+     | FileContextService        |                 | FileContextTool           |
+     | - diff snippet building   |                 | - fetch full file from    |
+     | - changed line extraction |                 |   GitHub on demand        |
+     | - context truncation      |                 | - bounded by policy       |
+     +---------------------------+                 +-------------+-------------+
+                                                                 |
+                                                                 v
+                                                   +---------------------------+
+                                                   | GitHub contents API       |
+                                                   +---------------------------+
+
+                                        +--------------------------------------+
+                                        | Parallel AI review agents            |
+                                        | - GeneralReviewAI                    |
+                                        | - SecurityReviewAI                   |
+                                        +----------------+---------------------+
+                                                         |
+                                                         v
+                                        +--------------------------------------+
+                                        | ReviewAggregator                     |
+                                        | - deduplicate findings               |
+                                        | - prefer stronger/security findings  |
+                                        +----------------+---------------------+
+                                                         |
+                                                         v
+                                        +--------------------------------------+
+                                        | ReviewVerifier                       |
+                                        | - normalize severity                 |
+                                        | - drop weak/invalid findings         |
+                                        +----------------+---------------------+
+                                                         |
+                                                         v
+                                        +--------------------------------------+
+                                        | GitHub Checks + Commit Status        |
+                                        | - annotations on changed files       |
+                                        | - success/failure summary            |
+                                        +----------------+---------------------+
+                                                         |
+                                                         v
+                                        +--------------------------------------+
+                                        | PRReviewStatusService                |
+                                        | - mark SUCCESS / FAILED              |
+                                        +--------------------------------------+
 ```
 
----
+## Core components
 
-## 🧠 Features
+| Component | Responsibility |
+| --- | --- |
+| `GitHubWebhookController` | Entry point for webhook validation, filtering, rate limiting, idempotency, and event publishing |
+| `PRReviewProducer` | Publishes accepted review events to Kafka |
+| `PRReviewConsumer` | Consumes review jobs, manages retries, and transitions execution state |
+| `PRReviewService` | Fetches PR data, filters supported files, and publishes final GitHub results |
+| `PRReviewOrchestrator` | Builds context, runs AI reviewers, aggregates findings, and verifies output |
+| `FileContextService` | Converts GitHub patch diffs into bounded AI review context |
+| `FileContextTool` | Lets review agents fetch full file contents from GitHub within policy limits |
+| `GitHubService` | Handles GitHub REST API calls for PR files, statuses, comments, and check runs |
+| `PRReviewStatusService` | Persists lifecycle state: `RECEIVED`, `IN_PROGRESS`, `SUCCESS`, `FAILED` |
+| `IdempotencyService` | Prevents duplicate delivery processing using persisted webhook delivery IDs |
+| `RateLimiterService` | Protects the service with per-repository Redis-based throttling |
 
-### 🔹 AI Code Review
+## Data stores and infrastructure
 
-* Detects:
+### PostgreSQL
 
-  * Bugs
-  * Security issues
-  * Performance issues
-* Provides structured feedback
+PostgreSQL stores durable application state through Spring Data JPA:
 
----
+- `processed_events`: processed GitHub delivery IDs for idempotency
+- `pr_review_status`: review lifecycle state, repository, PR number, installation ID, and failure reason
 
-### 🔹 Inline PR Comments
+### Redis
 
-* Adds comments directly on changed lines
-* Uses GitHub Checks API
+Redis is used for repository-scoped rate limiting. The service uses a Lua script loaded from `src/main/resources/scripts/rate-limiter.lua`.
 
----
+### Kafka
 
-### 🔹 Smart Line Mapping (No LLM dependency)
+Kafka decouples webhook ingestion from review execution. The configured topic is:
 
-* Anchor-based deterministic mapping
-* Prevents incorrect line numbers
+```properties
+topic.pr-review=ai-review-events-v2
+```
 
----
+### Observability
 
-### 🔹 Idempotency
+The application exposes:
 
-* Prevents duplicate webhook processing
+- Spring Boot Actuator endpoints
+- Prometheus metrics
+- OTLP trace export through `management.otlp.tracing.endpoint`
 
----
+## Review pipeline details
 
-### 🔹 Chunking + Batching
+### 1. Webhook acceptance rules
 
-* Handles large PRs efficiently
+The current webhook controller only accepts:
 
----
+- GitHub event: `pull_request`
+- Actions: `labeled`, `synchronize`
+- For `labeled`, the label must be `ai-review`
 
-### 🔹 Kafka (Optional)
+Requests are rejected or ignored when:
 
-* Enables async processing
-* Improves scalability
+- the webhook signature is invalid
+- the event type is not `pull_request`
+- the action is unsupported
+- the installation ID is missing
+- the repository exceeds the rate limit
+- the delivery ID was already processed
 
----
+### 2. File selection policy
 
-### 🔹 Secure Configuration
-
-* No secrets in code
-* Uses ENV variables
-
----
-
-### 🔹 Logging
-
-* Console (cloud)
-* File (local debugging)
-
----
-
-## 🏗️ Architecture
+The current implementation reviews only Java files:
 
 ```text
-                 ┌──────────────────────────┐
-                 │      GitHub Repo         │
-                 │ (PR / Label Events)     │
-                 └────────────┬────────────┘
-                              │ Webhook
-                              ▼
-                 ┌──────────────────────────┐
-                 │  Webhook Controller      │
-                 │ (Validation + Filtering) │
-                 └────────────┬────────────┘
-                              │
-               ┌──────────────┴──────────────┐
-               │                             │
-               ▼                             ▼
-   ┌────────────────────┐        ┌────────────────────┐
-   │ Direct Processing  │        │ Kafka Producer     │
-   │ (Sync Mode)        │        │ (Async Mode)       │
-   └──────────┬─────────┘        └──────────┬─────────┘
-              │                              │
-              ▼                              ▼
-      ┌────────────────────────────────────────────┐
-      │           PRReviewService                  │
-      │  - Extract diff                           │
-      │  - Chunk code                             │
-      │  - Map line numbers                       │
-      └────────────┬──────────────────────────────┘
-                   │
-                   ▼
-      ┌────────────────────────────────────────────┐
-      │              LLM Service                   │
-      │  - Analyze code                           │
-      │  - Generate structured feedback           │
-      └────────────┬──────────────────────────────┘
-                   │
-                   ▼
-      ┌────────────────────────────────────────────┐
-      │          GitHub Checks API                 │
-      │  - Inline comments                        │
-      │  - Pass/Fail status                       │
-      └────────────────────────────────────────────┘
+Allowed extension: .java
+Maximum files per PR: 40
 ```
 
----
+### 3. Context-building policy
 
-## 🧩 Component Roles
+The review context is built from patch hunks, with emphasis on added lines. Current limits:
 
-| Component        | Responsibility             |
-| ---------------- | -------------------------- |
-| GitHub App       | Sends webhook events       |
-| Controller       | Validates & filters events |
-| Kafka (optional) | Async buffering & scaling  |
-| PRReviewService  | Core processing logic      |
-| LLM Service      | AI analysis                |
-| GitHub API       | Adds comments & checks     |
+```text
+Patch context max chars: 4000
+Full-file fetch max chars: 12000
+Full-file fetch calls per PR: 5
+Full-file fetch calls per file: 1
+```
 
----
+### 4. Dual-agent review
 
-## 🖼️ Demo (How it works)
+Two review agents run in parallel:
 
-### 🔹 PR Trigger
+- general review
+- security review
 
-<img width="1659" height="725" alt="image" src="https://github.com/user-attachments/assets/36d3b532-b127-42f5-8dac-c774fa973b33" />
+The output is then:
 
+1. aggregated and deduplicated
+2. sorted by severity
+3. verified to remove invalid or weak findings
 
----
+### 5. GitHub output
 
-### 🔹 AI Review Summary
+Results are posted back to GitHub as:
 
-<img width="1446" height="723" alt="image" src="https://github.com/user-attachments/assets/aba212a1-fb70-4f00-98b4-2b94346ede23" />
+- commit status with context `AI Code Review`
+- check run with summary and inline annotations
 
----
+The check run currently publishes up to 50 annotations in one request.
 
-### 🔹 Inline Code Comments
-<img width="1335" height="711" alt="image" src="https://github.com/user-attachments/assets/c997938e-94f7-4997-984a-36a55bb0aa1c" />
+## Status lifecycle
 
----
+Review execution status is persisted with the following lifecycle:
 
-## ⚙️ Tech Stack
+```text
+RECEIVED -> IN_PROGRESS -> SUCCESS
+                     \-> FAILED
+```
 
-* Java 21
-* Spring Boot
-* LangChain4j
-* Kafka (optional)
-* H2 DB
-* Logback
-* GitHub App API
+## Local setup
 
----
+## Prerequisites
 
-## 🚀 Local Setup
+- Java 21
+- Maven
+- PostgreSQL
+- Redis
+- Kafka
+- A GitHub App with pull request webhook delivery enabled
+- An OpenAI API key
 
-### 1. Clone repo
+## Environment variables
+
+Set the following values before starting the application:
 
 ```bash
-git clone https://github.com/<your-username>/ai-code-review.git
-cd ai-code-review
+OPENAI_API_KEY=your_openai_key
+GITHUB_APP_ID=your_github_app_id
+GITHUB_PRIVATE_KEY_PATH=path_to_github_app_private_key
+GITHUB_WEBHOOK_SECRET=your_webhook_secret
+PHOENIX_OTLP_ENDPOINT=http://localhost:6006/v1/traces
+PORT=8080
 ```
 
----
+## Application configuration
 
-### 2. Set ENV variables
+The default `application.properties` expects:
 
-```bash
-export OPENAI_API_KEY=your_key
-export GITHUB_WEBHOOK_SECRET=your_secret
-export GITHUB_APP_ID=your_app_id
-export GITHUB_PRIVATE_KEY=your_key
+- PostgreSQL on `localhost:5432`
+- Redis on `localhost:6379`
+- an OTLP collector on `localhost:6006`
+
+Review the following properties before local startup:
+
+```properties
+spring.datasource.url=jdbc:postgresql://localhost:5432/ai_code_reviewer?options=-c%20TimeZone=Asia/Kolkata
+spring.datasource.username=postgres
+spring.data.redis.host=localhost
+spring.data.redis.port=6379
+server.port=${PORT:8080}
+topic.pr-review=ai-review-events-v2
+management.otlp.tracing.endpoint=${PHOENIX_OTLP_ENDPOINT:http://localhost:6006/v1/traces}
 ```
 
----
+## Run locally
 
-### 3. Run app
+1. Start PostgreSQL, Redis, and Kafka.
+2. Export the required environment variables.
+3. Start the application:
 
 ```bash
 mvn spring-boot:run
 ```
 
----
-
-### 4. Expose webhook
+4. Expose the service publicly if GitHub must reach your local machine:
 
 ```bash
 ngrok http 8080
 ```
 
----
-
-### 5. Configure webhook
-
-* URL: `https://your-ngrok-url/webhook`
-* Events: PR + Label
-* Secret: same as ENV
-
----
-
-### 6. Test
-
-* Create PR
-* Add label: `ai-review`
-* See comments + checks
-
----
-
-## ⚡ Kafka Mode (Optional)
-
-Enable:
-
-```properties
-kafka.enabled=true
-```
-
-Flow:
+5. Configure the GitHub App webhook URL to point to:
 
 ```text
-Webhook → Kafka → Consumer → Review
+https://<your-public-url>/webhook
 ```
 
----
+## Usage
 
-## 🔒 Security
+Trigger a review by either:
 
-* ENV-based secrets
-* GitHub signature validation
-* No secrets in repo
----
+- adding the `ai-review` label to a pull request
+- pushing new commits to an already tracked pull request when GitHub emits `synchronize`
 
+On success, GitHub will show:
 
-## 🚀 Future Improvements
+- a commit status named `AI Code Review`
+- a check run containing a summary and inline annotations
 
-* Multi-file context
-* Smart deduplication
-* UI dashboard
+## Tech stack
 
----
+- Java 21
+- Spring Boot 3
+- Spring Web
+- Spring Data JPA
+- Spring Kafka
+- Spring Data Redis
+- PostgreSQL
+- Redis
+- Kafka
+- LangChain4j
+- OpenAI chat model
+- Micrometer, Prometheus, and OTLP tracing
+
+## Current limitations
+
+- review scope is limited to `.java` files
+- only `pull_request` webhook events are processed
+- `labeled` and `synchronize` are the only supported actions
+- full-file context fetches are tightly budgeted
+- check-run annotations are capped at 50 per request
