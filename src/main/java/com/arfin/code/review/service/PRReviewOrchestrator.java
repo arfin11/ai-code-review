@@ -16,7 +16,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -30,6 +32,7 @@ public class PRReviewOrchestrator {
     private final ReviewAggregator reviewAggregator;
     private final ReviewVerifier reviewVerifier;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private static final String TRACE_ID_KEY = "traceId";
     private static final Pattern ANCHOR_PATTERN = Pattern.compile("\"anchor\"\\s*:\\s*(.+?)(\\s*,\\s*\"source\")", Pattern.DOTALL);
 
     public PRReviewOrchestrator(FileContextService fileContextService,
@@ -59,7 +62,7 @@ public class PRReviewOrchestrator {
 
             ReviewResult reviewResult;
             try (AutoCloseable ignored = fileContextTool.openReviewSession(repo, installationId, prNumber)) {
-                ResultWithAgenticScope workflowResult = parallelReviewWorkflow.run(reviewInput);
+                ResultWithAgenticScope workflowResult = runWorkflowWithCurrentMdc(reviewInput);
                 reviewResult = extractReviewResult(workflowResult);
             }
 
@@ -106,6 +109,30 @@ public class PRReviewOrchestrator {
             }
         }
         return sb.toString();
+    }
+
+    private ResultWithAgenticScope runWorkflowWithCurrentMdc(String reviewInput) {
+        Map<String, String> mdcContext = MDC.getCopyOfContextMap();
+        if (mdcContext == null || mdcContext.isEmpty()) {
+            return parallelReviewWorkflow.run(reviewInput);
+        }
+
+        Map<String, String> contextToRestore = new HashMap<>(mdcContext);
+        if (!contextToRestore.containsKey(TRACE_ID_KEY)) {
+            return parallelReviewWorkflow.run(reviewInput);
+        }
+
+        Map<String, String> previousContext = MDC.getCopyOfContextMap();
+        try {
+            MDC.setContextMap(contextToRestore);
+            return parallelReviewWorkflow.run(reviewInput);
+        } finally {
+            if (previousContext == null || previousContext.isEmpty()) {
+                MDC.clear();
+            } else {
+                MDC.setContextMap(previousContext);
+            }
+        }
     }
 
     private List<ReviewFinding> findingsOf(ReviewResponse response) {

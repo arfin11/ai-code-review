@@ -9,6 +9,7 @@ public class PRReviewEvent {
     private int prNumber;
     private int installationId;
     private String deliveryId; // important for idempotency
+    private String traceId;
 
     public String getRepo() {
         return repo;
@@ -40,5 +41,13 @@ public class PRReviewEvent {
 
     public void setDeliveryId(String deliveryId) {
         this.deliveryId = deliveryId;
+    }
+
+    public String getTraceId() {
+        return traceId;
+    }
+
+    public void setTraceId(String traceId) {
+        this.traceId = traceId;
     }
 }

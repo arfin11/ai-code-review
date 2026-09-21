@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -27,6 +28,7 @@ import java.util.Set;
 public class GitHubWebhookController {
 
     private static final Set<String> SUPPORTED_ACTIONS = Set.of("labeled", "synchronize");
+    private static final String TRACE_ID_KEY = "traceId";
 
     private final PRReviewProducer producer;
     private final IdempotencyService idempotencyService;
@@ -109,6 +111,7 @@ public class GitHubWebhookController {
         eventObj.setPrNumber(payload.path("pull_request").path("number").asInt());
         eventObj.setInstallationId(installationId);
         eventObj.setDeliveryId(deliveryId);
+        eventObj.setTraceId(MDC.get(TRACE_ID_KEY));
         return eventObj;
     }
 }

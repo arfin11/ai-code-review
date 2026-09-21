@@ -4,6 +4,7 @@ import com.arfin.code.review.controller.GitHubWebhookController;
 import com.arfin.code.review.model.PRReviewEvent;
 import com.arfin.code.review.service.PRReviewService;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.annotation.RetryableTopic;
 import org.springframework.kafka.support.Acknowledgment;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class PRReviewConsumer {
 
+    private static final String TRACE_ID_KEY = "traceId";
     private final PRReviewService service;
 
     public PRReviewConsumer(PRReviewService service) {
@@ -25,8 +27,10 @@ public class PRReviewConsumer {
     )
     @KafkaListener(topics = "${topic.pr-review}", groupId = "pr-review-group")
     public void consume(PRReviewEvent event) {
-
         try {
+            if (event.getTraceId() != null && !event.getTraceId().isBlank()) {
+                MDC.put(TRACE_ID_KEY, event.getTraceId());
+            }
             service.reviewPR(
                 event.getRepo(),
                 event.getPrNumber(),
@@ -34,6 +38,8 @@ public class PRReviewConsumer {
             );
         } catch (Exception e) {
             log.error("An unexpected error occurred while processing webhook event {0}",e);
+        } finally {
+            MDC.remove(TRACE_ID_KEY);
         }
     }
 }
