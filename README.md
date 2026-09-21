@@ -13,7 +13,7 @@ The current implementation is optimized around:
 - Java-file-only review scope
 - Review status persistence in PostgreSQL
 - Rate limiting in Redis
-- Observability through Prometheus and OTLP tracing
+- Observability through Prometheus metrics
 
 ## End-to-end flow
 
@@ -204,7 +204,6 @@ The application exposes:
 
 - Spring Boot Actuator endpoints
 - Prometheus metrics
-- OTLP trace export through `management.otlp.tracing.endpoint`
 
 ## Review pipeline details
 
@@ -297,7 +296,6 @@ OPENAI_API_KEY=your_openai_key
 GITHUB_APP_ID=your_github_app_id
 GITHUB_PRIVATE_KEY_PATH=path_to_github_app_private_key
 GITHUB_WEBHOOK_SECRET=your_webhook_secret
-PHOENIX_OTLP_ENDPOINT=http://localhost:6006/v1/traces
 PORT=8080
 ```
 
@@ -307,7 +305,6 @@ The default `application.properties` expects:
 
 - PostgreSQL on `localhost:5432`
 - Redis on `localhost:6379`
-- an OTLP collector on `localhost:6006`
 
 Review the following properties before local startup:
 
@@ -318,7 +315,6 @@ spring.data.redis.host=localhost
 spring.data.redis.port=6379
 server.port=${PORT:8080}
 topic.pr-review=ai-review-events-v2
-management.otlp.tracing.endpoint=${PHOENIX_OTLP_ENDPOINT:http://localhost:6006/v1/traces}
 ```
 
 ## Run locally
@@ -368,7 +364,7 @@ On success, GitHub will show:
 - Kafka
 - LangChain4j
 - OpenAI chat model
-- Micrometer, Prometheus, and OTLP tracing
+- Micrometer and Prometheus
 
 ## Current limitations
 
@@ -377,3 +373,13 @@ On success, GitHub will show:
 - `labeled` and `synchronize` are the only supported actions
 - full-file context fetches are tightly budgeted
 - check-run annotations are capped at 50 per request
+
+## Screenshots
+
+### Inline review comment in pull request changes view
+
+![Inline review comment in PR changes view](C:\Users\My Laptop\AppData\Local\github-copilot\intellij\images\pasted_image_1_1790016157897.png)
+
+### AI Code Review check run summary and annotations
+
+![AI Code Review check run summary and annotations](C:\Users\My Laptop\AppData\Local\github-copilot\intellij\images\pasted_image_2_1790016246802.png)
